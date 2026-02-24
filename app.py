@@ -1,611 +1,416 @@
+import utils.session
 import streamlit as st
+import requests
 import json
 import base64
-import re
-from pathlib import Path
-from openai import OpenAI
+import io
 
-# ──────────────────────────────────────────────
-# PAGE CONFIG
-# ──────────────────────────────────────────────
-st.set_page_config(
-    page_title="Academic Image Analyzer",
-    page_icon="🔬",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# ─────────────────────────────────────────────────────────────────
+#  CONFIGURATION & STYLING
+# ─────────────────────────────────────────────────────────────────
+st.set_page_config(page_title="Qwen VL Studio", page_icon="🧠", layout="wide")
 
-# ──────────────────────────────────────────────
-# CUSTOM CSS
-# ──────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Syne:wght@700;800&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
-    --bg: #0a0e1a;
-    --surface: #111827;
-    --surface2: #1a2235;
+    --bg: #0d0d14;
+    --surface: #16161f;
     --accent: #00e5ff;
-    --accent2: #7c3aed;
-    --text: #e2e8f0;
-    --muted: #64748b;
-    --success: #10b981;
-    --warning: #f59e0b;
-    --border: #1e2d45;
+    --text: #e8eaf0;
 }
 
-html, body, [class*="css"] {
-    font-family: 'DM Sans', sans-serif;
-    background-color: var(--bg) !important;
-    color: var(--text) !important;
+html, body, .stApp { background: var(--bg) !important; color: var(--text) !important; font-family: 'Inter', sans-serif; }
+
+.main-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(0deg, var(--bg) 80%, transparent 100%);
+    padding: 1.5rem 15% 2rem 15%;
+    z-index: 1000;
 }
 
-.main { background: var(--bg) !important; }
-.block-container { padding: 2rem 2.5rem !important; max-width: 1400px; }
+.chat-container { padding-bottom: 260px; max-width: 900px; margin: 0 auto; }
 
-.app-header {
-    background: linear-gradient(135deg, #0a0e1a 0%, #1a1040 50%, #0a1628 100%);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 2rem 2.5rem;
-    margin-bottom: 2rem;
-    position: relative;
-    overflow: hidden;
-}
-.app-title {
-    font-family: 'Space Mono', monospace;
-    font-size: 2rem;
-    font-weight: 700;
-    background: linear-gradient(90deg, #00e5ff, #7c3aed);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin: 0;
-}
-.app-subtitle {
-    color: var(--muted);
-    font-size: 0.9rem;
-    margin-top: 0.4rem;
-    font-family: 'Space Mono', monospace;
+.msg-row-user { display: flex; justify-content: flex-end; margin: 20px 0; gap: 12px; }
+.msg-row-ai { display: flex; justify-content: flex-start; margin: 20px 0; gap: 12px; }
+
+.bubble-user {
+    background: #252538;
+    border-radius: 18px 18px 4px 18px;
+    padding: 14px 20px;
+    max-width: 80%;
+    border: 1px solid rgba(255,255,255,0.05);
 }
 
-section[data-testid="stSidebar"] {
-    background: var(--surface) !important;
-    border-right: 1px solid var(--border);
-}
-section[data-testid="stSidebar"] .block-container { padding: 1.5rem !important; }
+.bubble-ai { background: transparent; padding: 14px 0; max-width: 90%; line-height: 1.6; }
 
-.key-locked {
-    background: linear-gradient(135deg, #064e3b, #065f46);
-    border: 1px solid #10b981;
-    border-radius: 10px;
-    padding: 0.8rem 1rem;
-    font-family: 'Space Mono', monospace;
-    font-size: 0.78rem;
-    color: #6ee7b7;
-}
+.avatar { width: 35px; height: 35px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; }
+.avatar-user { background: var(--accent); color: #000; }
+.avatar-ai { background: #7c3aed; color: #fff; }
 
-.stTextInput > div > div > input,
-.stTextArea > div > div > textarea {
-    background: var(--surface2) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 8px !important;
-    color: var(--text) !important;
-}
-.stSelectbox > div > div {
-    background: var(--surface2) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 8px !important;
-    color: var(--text) !important;
-}
-.stFileUploader > div {
-    background: var(--surface2) !important;
-    border: 1px dashed var(--border) !important;
-    border-radius: 8px !important;
-}
-.stButton > button {
-    background: linear-gradient(135deg, #00c4d4, #7c3aed) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 8px !important;
-    font-family: 'Space Mono', monospace !important;
-    font-weight: 700 !important;
-    font-size: 0.85rem !important;
-    padding: 0.6rem 1.5rem !important;
-    width: 100%;
-}
-
-.section-title {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    color: var(--accent);
-    margin-bottom: 1rem;
-}
-
-.model-badge {
-    background: linear-gradient(135deg, rgba(124,58,237,0.2), rgba(0,229,255,0.1));
-    border: 1px solid rgba(0,229,255,0.25);
-    border-radius: 8px;
-    padding: 0.5rem 0.8rem;
-    font-family: 'Space Mono', monospace;
-    font-size: 0.72rem;
-    color: var(--accent);
-    margin-top: 0.5rem;
-    text-align: center;
-}
-
-/* Raw JSON output box */
-.json-output {
-    background: #060d1a;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 1.5rem;
-    font-family: 'Space Mono', monospace;
-    font-size: 0.78rem;
-    line-height: 1.7;
-    color: #a5f3fc;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
-hr { border-color: var(--border) !important; }
-.stSpinner > div { border-top-color: var(--accent) !important; }
-label, .stSelectbox label, .stTextInput label, .stTextArea label {
-    font-family: 'Space Mono', monospace !important;
-    font-size: 0.75rem !important;
-    color: var(--muted) !important;
-    text-transform: uppercase !important;
-    letter-spacing: 1px !important;
-}
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+#MainMenu, footer, header { visibility: hidden; }
+.stTextArea textarea { background: #1a1a28 !important; color: white !important; border: 1px solid rgba(255,255,255,0.1) !important; border-radius: 12px !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ──────────────────────────────────────────────
-# VLM MODELS
-# ──────────────────────────────────────────────
-VLM_MODELS = {
-    "⭐ Qwen3 VL 235B A22B Instruct  (Best Quality)":   "qwen/qwen3-vl-235b-a22b-instruct",
-    "🧠 Qwen3 VL 235B A22B Thinking  (Deep Reasoning)": "qwen/qwen3-vl-235b-a22b-thinking",
-    "🔬 Qwen3 VL 32B Instruct         (High Accuracy)":  "qwen/qwen3-vl-32b-instruct",
-    "⚡ Qwen3 VL 30B A3B Instruct     (Fast + Smart)":   "qwen/qwen3-vl-30b-a3b-instruct",
-    "💡 Qwen3 VL 30B A3B Thinking     (MoE Reasoning)":  "qwen/qwen3-vl-30b-a3b-thinking",
-    "🚀 Qwen3 VL 8B Instruct          (Fast & Cheap)":   "qwen/qwen3-vl-8b-instruct",
-    "🔍 Qwen3 VL 8B Thinking          (8B Reasoning)":   "qwen/qwen3-vl-8b-thinking",
-    "🏆 Qwen2.5 VL 72B Instruct       (Proven Stable)":  "qwen/qwen2.5-vl-72b-instruct",
-    "📦 Qwen2.5 VL 7B Instruct        (Lightweight)":    "qwen/qwen2.5-vl-7b-instruct",
-    "🌐 Qwen2 VL 72B Instruct         (Previous Gen)":   "qwen/qwen2-vl-72b-instruct",
+# ─────────────────────────────────────────────────────────────────
+#  MODELS & CONSTANTS
+# ─────────────────────────────────────────────────────────────────
+QWEN_MODELS = {
+    "⭐ Qwen3 VL 235B A22B Instruct":  "qwen/qwen3-vl-235b-a22b-instruct",
+    "🧠 Qwen3 VL 235B A22B Thinking":  "qwen/qwen3-vl-235b-a22b-thinking",
+    "🔬 Qwen3 VL 32B Instruct":        "qwen/qwen3-vl-32b-instruct",
+    "⚡ Qwen3 VL 30B A3B Instruct":    "qwen/qwen3-vl-30b-a3b-instruct",
+    "💡 Qwen3 VL 30B A3B Thinking":    "qwen/qwen3-vl-30b-a3b-thinking",
+    "🚀 Qwen3 VL 8B Instruct":         "qwen/qwen3-vl-8b-instruct",
+    "🔍 Qwen3 VL 8B Thinking":         "qwen/qwen3-vl-8b-thinking",
+    "🏆 Qwen2.5 VL 72B Instruct":      "qwen/qwen2.5-vl-72b-instruct",
+    "📦 Qwen2.5 VL 7B Instruct":       "qwen/qwen2.5-vl-7b-instruct",
+    "🌐 Qwen2 VL 72B Instruct":        "qwen/qwen2-vl-72b-instruct",
 }
 
-# ──────────────────────────────────────────────
-# PROMPT TEMPLATES
-# ──────────────────────────────────────────────
-SYSTEM_PROMPT = """
-You are a world-class academic content analyzer trained on NEET, JEE Main, JEE Advanced,
-IPhO, IChO, IBO, IMO, USABO, Science Olympiad, and all major international academic competitions.
-You analyze textbook diagrams, equations, and images with precision.
-Always respond in valid JSON format only — no markdown, no preamble.
-Be structured, precise, and exam-focused for the relevant competition level.
-"""
-
-PROMPTS = {
-    "📋 Comprehensive Summary": {
-        "key": "summary",
-        "desc": "Full exam-ready summary with key points, formulas, mnemonics & sample questions",
-        "template": """
-Generate a complete, exam-ready summary of this academic image suitable for last-minute revision.
-Return valid JSON only:
-{
-  "title": "",
-  "subject": "",
-  "topic": "",
-  "exam_relevance": [],
-  "difficulty_level": "Beginner | Intermediate | Advanced | Olympiad",
-  "one_line_summary": "",
-  "detailed_summary": "",
-  "key_points": [],
-  "must_remember_facts": [],
-  "formulas_or_reactions": [],
-  "labeled_diagram_notes": [],
-  "mnemonics_or_memory_tips": [],
-  "exam_traps_to_avoid": [],
-  "likely_question_types": [],
-  "sample_questions": [{"question": "", "answer": "", "type": ""}],
-  "cross_topic_connections": [],
-  "revision_priority": "High | Medium | Low"
-}"""
-    },
-    "⚡ Quick Facts Card": {
-        "key": "quick_facts",
-        "desc": "Flashcard-style — perfect for last-hour revision",
-        "template": """
-Create a quick-reference fact card for this academic image — suitable for flashcard or last-hour revision.
-Return valid JSON only:
-{
-  "topic": "",
-  "subject": "",
-  "exam_tags": [],
-  "5_key_facts": [],
-  "formula_snapshot": [],
-  "diagram_in_words": "",
-  "remember_this": "",
-  "dont_confuse_with": ""
-}"""
-    },
-    "🔭 Physics Analysis": {
-        "key": "physics",
-        "desc": "NEET / JEE / IPhO / APhO level deep physics breakdown",
-        "template": """
-Analyze this Physics diagram for NEET / JEE / International Physics Olympiad (IPhO) level.
-Return valid JSON only:
-{
-  "concept_name": "",
-  "chapter": "",
-  "exam_relevance": [],
-  "difficulty_level": "",
-  "summary": "",
-  "explanation_step_by_step": [],
-  "formulas": [],
-  "vector_or_symbol_meanings": {},
-  "SI_units_involved": [],
-  "derivation_hints": "",
-  "common_student_mistakes": [],
-  "advanced_conceptual_questions": [],
-  "olympiad_extension": ""
-}"""
-    },
-    "⚗️ Chemistry Analysis": {
-        "key": "chemistry",
-        "desc": "NEET / JEE / IChO reaction mechanisms & organic chemistry",
-        "template": """
-Analyze this Chemistry diagram or reaction mechanism for NEET / JEE / IChO level.
-Return valid JSON only:
-{
-  "compound_names": [],
-  "iupac_names": [],
-  "functional_groups": [],
-  "reaction_type": "",
-  "exam_relevance": [],
-  "difficulty_level": "",
-  "summary": "",
-  "mechanism_explanation": [],
-  "reagents_and_products": {"reagents": [], "products": [], "conditions": []},
-  "stereochemistry_notes": "",
-  "important_exam_points": [],
-  "mcq_questions": [],
-  "olympiad_extension": ""
-}"""
-    },
-    "🌿 Biology Analysis": {
-        "key": "biology",
-        "desc": "NEET / IBO / USABO labeled diagrams & biological processes",
-        "template": """
-Analyze this Biology textbook diagram for NEET / IBO / USABO level.
-Return valid JSON only:
-{
-  "biological_structure": "",
-  "organism_or_system": "",
-  "exam_relevance": [],
-  "difficulty_level": "",
-  "summary": "",
-  "labeled_parts_with_functions": {},
-  "biological_process_explained": "",
-  "related_diseases_or_disorders": [],
-  "important_exam_points": [],
-  "common_confusions": [],
-  "assertion_reason_questions": [],
-  "olympiad_extension": ""
-}"""
-    },
-    "📐 Mathematics Analysis": {
-        "key": "mathematics",
-        "desc": "JEE / IMO / USAMO / AMC geometry, algebra, calculus",
-        "template": """
-Analyze this Mathematics diagram or problem for JEE / IMO / Putnam level.
-Return valid JSON only:
-{
-  "topic": "",
-  "branch": "Algebra | Geometry | Calculus | Number Theory | Combinatorics | Trigonometry | Other",
-  "exam_relevance": [],
-  "difficulty_level": "",
-  "summary": "",
-  "problem_statement": "",
-  "solution_approach": [],
-  "key_theorems_used": [],
-  "formulas": [],
-  "geometric_properties": [],
-  "common_mistakes": [],
-  "practice_problems": [],
-  "olympiad_extension": ""
-}"""
-    },
-    "🔍 Topic Identifier": {
-        "key": "topic",
-        "desc": "Quickly classify the subject, chapter, topic & exam tags",
-        "template": """
-Identify the academic classification of this image.
-Return valid JSON only:
-{
-  "subject": "",
-  "chapter": "",
-  "topic": "",
-  "subtopic": "",
-  "exam_tags": [],
-  "difficulty_level": "",
-  "estimated_marks_weightage": ""
-}"""
-    },
-    "📚 General Academic": {
-        "key": "general",
-        "desc": "General-purpose analysis for any academic image",
-        "template": """
-Carefully analyze this academic image/diagram and return a structured educational description.
-Return valid JSON only:
-{
-  "subject": "",
-  "chapter_name": "",
-  "topic_name": "",
-  "exam_relevance": [],
-  "difficulty_level": "",
-  "diagram_type": "",
-  "summary": "",
-  "detailed_explanation": "",
-  "key_labels": [],
-  "formulas_or_equations": [],
-  "important_concepts": [],
-  "common_mistakes": [],
-  "possible_exam_questions": []
-}"""
-    },
+DEEPSEEK_MODELS = {
+    "🔥 DeepSeek V3.2 Speciale":       "deepseek/deepseek-v3.2-speciale",
+    "⭐ DeepSeek V3.2":                "deepseek/deepseek-v3.2",
+    "🧪 DeepSeek V3.2 Experimental":   "deepseek/deepseek-v3.2-exp"
 }
 
-# ──────────────────────────────────────────────
-# SESSION STATE
-# ──────────────────────────────────────────────
-if "api_key" not in st.session_state:
-    st.session_state.api_key = ""
-if "api_key_locked" not in st.session_state:
-    st.session_state.api_key_locked = False
-if "last_raw" not in st.session_state:
-    st.session_state.last_raw = None
+MIME_MAP = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+    "gif": "image/gif",
+}
 
-# ──────────────────────────────────────────────
-# HELPERS
-# ──────────────────────────────────────────────
-def clean_url(raw_url: str) -> str:
-    """Strip surrounding quotes, commas, spaces from pasted URLs."""
-    return raw_url.strip().strip('"').strip("'").strip(',').strip()
+# ─────────────────────────────────────────────────────────────────
+#  SESSION MANAGEMENT
+# ─────────────────────────────────────────────────────────────────
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-def image_to_base64(uploaded_file) -> str:
-    ext = Path(uploaded_file.name).suffix.lower().lstrip(".")
-    mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
-                "gif": "image/gif", "webp": "image/webp", "bmp": "image/bmp"}
-    mime = mime_map.get(ext, "image/jpeg")
-    b64 = base64.b64encode(uploaded_file.read()).decode("utf-8")
-    return f"data:{mime};base64,{b64}"
-
-def call_api(api_key: str, model: str, prompt: str, image_url: str) -> str:
-    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
-    completion = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                ],
-            },
-        ],
-        temperature=0.2,
-        max_tokens=4096,
-    )
-    return completion.choices[0].message.content
-
-def clean_and_parse(raw: str):
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE)
-    try:
-        parsed = json.loads(cleaned)
-        return json.dumps(parsed, indent=2, ensure_ascii=False), None
-    except json.JSONDecodeError as e:
-        return cleaned, str(e)
-
-# ──────────────────────────────────────────────
-# SIDEBAR
-# ──────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────
+#  SIDEBAR
+# ─────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("""
-    <div style='font-family:Space Mono,monospace;font-size:1.1rem;font-weight:700;
-                color:#00e5ff;margin-bottom:1.5rem;border-bottom:1px solid #1e2d45;
-                padding-bottom:1rem;'>
-        ⚙️ Configuration
-    </div>
-    """, unsafe_allow_html=True)
+    st.title("⚙️ Studio Settings")
+    api_key = st.text_input("OpenRouter API Key", type="password")
 
-    st.markdown("<div class='section-title'>🔑 OpenRouter API Key</div>", unsafe_allow_html=True)
+    st.markdown("### 📝 User Prompts")
+    sys_prompt = st.text_area("System Prompt", value="You are a helpful AI assistant.")
+    ocr_prompt = "Extract all text and details from this image"
 
-    if st.session_state.api_key_locked:
-        masked = st.session_state.api_key[:8] + "••••••••••••••••" + st.session_state.api_key[-4:]
-        st.markdown(f"""
-        <div class='key-locked'>
-            ✅ &nbsp;<strong>API KEY ACTIVE</strong><br>
-            <span style='opacity:0.7;font-size:0.7rem;'>{masked}</span>
-        </div>
-        """, unsafe_allow_html=True)
-        if st.button("🔓 Change Key", key="unlock_btn"):
-            st.session_state.api_key_locked = False
-            st.session_state.api_key = ""
-            st.rerun()
+    st.markdown("---")
+    use_deepseek = st.toggle("Use DeepSeek Pipeline", value=False)
+
+    if use_deepseek:
+        model_name = st.selectbox("Select DeepSeek Model", list(DEEPSEEK_MODELS.keys()))
+        model_id = DEEPSEEK_MODELS[model_name]
+        stream_choice = False
+        st.info("💡 DeepSeek: Streaming disabled for stability.")
     else:
-        api_input = st.text_input(
-            "Paste your key",
-            type="password",
-            placeholder="sk-or-v1-...",
-            key="api_input_field",
+        model_name = st.selectbox("Select Qwen Model", list(QWEN_MODELS.keys()))
+        model_id = QWEN_MODELS[model_name]
+        stream_choice = st.checkbox("Streaming Mode", value=True)
+
+    temperature = st.slider("Temperature", 0.0, 2.0, 0.7)
+
+    if st.button("🗑 Clear Chat History"):
+        st.session_state.messages = []
+        st.rerun()
+
+# ─────────────────────────────────────────────────────────────────
+#  CORE HELPERS
+# ─────────────────────────────────────────────────────────────────
+def call_api(messages, model, stream, timeout=180):
+    """Call OpenRouter API. Returns response or None on failure."""
+    if not api_key:
+        st.error("❌ API Key is required. Please enter it in the sidebar.")
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://qwen-vl-studio.app",  # helps OpenRouter routing
+        "X-Title": "Qwen VL Studio"
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "stream": stream
+    }
+
+    try:
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            stream=stream,
+            timeout=timeout
         )
-        if st.button("🔒 Lock & Save Key", key="lock_btn"):
-            if api_input and api_input.strip():
-                st.session_state.api_key = api_input.strip()
-                st.session_state.api_key_locked = True
-                st.rerun()
-            else:
-                st.error("Please enter a valid API key")
+        return response
+    except requests.exceptions.Timeout:
+        st.error("⏱️ Request timed out. Try a smaller model or shorter input.")
+        return None
+    except requests.exceptions.ConnectionError:
+        st.error("🌐 Connection error. Check your internet connection.")
+        return None
+    except Exception as e:
+        st.error(f"❌ Unexpected error: {e}")
+        return None
 
-    st.markdown("<br>", unsafe_allow_html=True)
 
-    st.markdown("<div class='section-title'>🤖 Vision Model</div>", unsafe_allow_html=True)
-    selected_model_label = st.selectbox(
-        "Choose model",
-        options=list(VLM_MODELS.keys()),
-        index=7,
-        label_visibility="collapsed"
-    )
-    selected_model = VLM_MODELS[selected_model_label]
-    st.markdown(f"<div class='model-badge'>{selected_model}</div>", unsafe_allow_html=True)
+def get_mime_type(filename: str) -> str:
+    """Return correct MIME type based on file extension."""
+    ext = filename.rsplit(".", 1)[-1].lower()
+    return MIME_MAP.get(ext, "image/jpeg")
 
-    st.markdown("<br>", unsafe_allow_html=True)
 
-    # st.markdown("<div class='section-title'>📝 Analysis Mode</div>", unsafe_allow_html=True)
-    # selected_prompt_label = st.selectbox(
-    #     "Select mode",
-    #     options=list(PROMPTS.keys()),
-    #     label_visibility="collapsed"
-    # )
-    prompt_info = PROMPTS["📋 Comprehensive Summary"]
-    st.markdown(f"""
-    <div style='background:#0d1f33;border-left:3px solid #7c3aed;border-radius:0 8px 8px 0;
-                padding:0.6rem 0.8rem;font-size:0.75rem;color:#94a3b8;margin-top:0.5rem;'>
-        {prompt_info["desc"]}
-    </div>
-    """, unsafe_allow_html=True)
+def process_file(uploaded_file):
+    """
+    Returns (ftype, fdata, mime_type).
+    ftype: 'image' | 'text'
+    fdata: base64 string for images, plain text for text files
+    mime_type: proper MIME string for images
+    """
+    fname = uploaded_file.name.lower()
+    content = uploaded_file.read()
+    ext = fname.rsplit(".", 1)[-1]
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("""
-    <div style='font-size:0.7rem;color:#374151;font-family:Space Mono,monospace;
-                text-align:center;border-top:1px solid #1e2d45;padding-top:1rem;'>
-        Powered by OpenRouter · Qwen VL Series<br>
-        NEET · JEE · IPhO · IChO · IBO · IMO
-    </div>
-    """, unsafe_allow_html=True)
+    if ext in ("png", "jpg", "jpeg", "webp", "gif"):
+        mime = get_mime_type(fname)
+        return "image", base64.b64encode(content).decode(), mime
 
-# ──────────────────────────────────────────────
-# MAIN AREA
-# ──────────────────────────────────────────────
-st.markdown("""
-<div class='app-header'>
-    <div class='app-title'>🔬 Academic Image Analyzer</div>
-    <div class='app-subtitle'>
-        NEET · JEE Main · JEE Advanced · IPhO · IChO · IBO · IMO · USABO · Olympiad
-    </div>
-</div>
-""", unsafe_allow_html=True)
+    elif ext == "pdf":
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(io.BytesIO(content))
+            text = "\n".join([page.extract_text() or "" for page in reader.pages[:5]])
+            return "text", f"[PDF Content]\n{text}", None
+        except ImportError:
+            return "text", "[Error: pypdf not installed. Run: pip install pypdf]", None
+        except Exception as e:
+            return "text", f"[Error reading PDF: {e}]", None
 
-if not st.session_state.api_key_locked:
-    st.markdown("""
-    <div style='background:linear-gradient(135deg,#1c1009,#2d1b00);
-                border:1px solid #f59e0b;border-radius:12px;
-                padding:2rem;text-align:center;margin-top:2rem;'>
-        <div style='font-size:2rem;margin-bottom:0.8rem;'>🔑</div>
-        <div style='font-family:Space Mono,monospace;color:#fbbf24;font-size:1rem;
-                    font-weight:700;margin-bottom:0.5rem;'>API Key Required</div>
-        <div style='color:#92400e;font-size:0.85rem;'>
-            Enter your OpenRouter API key in the sidebar to begin analyzing images.
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    st.stop()
-
-# ── IMAGE INPUT ──
-st.markdown("<div class='section-title'>📸 Image Input</div>", unsafe_allow_html=True)
-
-col_input, col_preview = st.columns([1, 1], gap="large")
-
-with col_input:
-    input_mode = st.radio(
-        "Source",
-        ["🔗 URL / S3 Link", "📁 Upload Image"],
-        horizontal=True,
-        label_visibility="collapsed"
-    )
-
-    final_image_url = None
-    uploaded_preview = None
-
-    if "🔗" in input_mode:
-        url_input = st.text_input(
-            "Image URL or S3 link",
-            placeholder="https://your-bucket.s3.amazonaws.com/image.jpg",
-        )
-        if url_input and url_input.strip():
-            final_image_url = clean_url(url_input)   # ← strips quotes/commas
-            uploaded_preview = final_image_url
     else:
-        uploaded_file = st.file_uploader(
-            "Drop image here",
-            type=["jpg", "jpeg", "png", "webp", "gif", "bmp"],
+        try:
+            return "text", f"[File: {uploaded_file.name}]\n{content.decode('utf-8')}", None
+        except Exception:
+            return "text", "[Error: Could not decode file as text]", None
+
+
+def build_history_for_api(history):
+    """
+    Convert session history to API messages.
+    Image content is stored as text in session for display but
+    we only send text for past messages (image already consumed).
+    """
+    api_msgs = []
+    for m in history:
+        role = m["role"]
+        content = m["content"]
+        # content in history is always a display string (never raw image dict)
+        api_msgs.append({"role": role, "content": content})
+    return api_msgs
+
+
+def stream_response(res, placeholder):
+    """Stream response chunks and return full text."""
+    full_res = ""
+    try:
+        for line in res.iter_lines():
+            if line:
+                try:
+                    raw = line.decode("utf-8").strip()
+                    if raw.startswith("data: "):
+                        raw = raw[6:]
+                    if raw == "[DONE]":
+                        break
+                    chunk = json.loads(raw)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    text = delta.get("content", "")
+                    if text:
+                        full_res += text
+                        placeholder.markdown(full_res + "▌")
+                except json.JSONDecodeError:
+                    continue
+                except Exception:
+                    continue
+    except Exception as e:
+        st.error(f"Streaming error: {e}")
+    placeholder.markdown(full_res)
+    return full_res
+
+
+# ─────────────────────────────────────────────────────────────────
+#  CHAT DISPLAY
+# ─────────────────────────────────────────────────────────────────
+st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+for msg in st.session_state.messages:
+    role = msg["role"]
+    content = msg["content"]
+    if role == "user":
+        st.markdown(
+            f"<div class='msg-row-user'>"
+            f"<div class='bubble-user'>{content}</div>"
+            f"<div class='avatar-user avatar'>U</div>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown(
+            f"<div class='msg-row-ai'>"
+            f"<div class='avatar-ai avatar'>AI</div>"
+            f"<div class='bubble-ai'>{content}</div>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+st.markdown('</div>', unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────
+#  FIXED FOOTER INPUT
+# ─────────────────────────────────────────────────────────────────
+st.markdown('<div class="main-footer">', unsafe_allow_html=True)
+with st.container():
+    c1, c2 = st.columns([0.85, 0.15])
+    with c1:
+        u_input = st.text_area(
+            "msg",
+            placeholder="Ask anything...",
+            label_visibility="collapsed",
+            height=70
+        )
+        u_file = st.file_uploader(
+            "upload",
+            type=["png", "jpg", "jpeg", "pdf", "txt", "py", "js", "html", "json"],
             label_visibility="collapsed"
         )
-        if uploaded_file:
-            final_image_url = image_to_base64(uploaded_file)
-            uploaded_preview = uploaded_file
+    with c2:
+        st.write(" ")
+        send = st.button("Send ➔", use_container_width=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    analyze_clicked = st.button("🚀 Analyze Image", disabled=(final_image_url is None), key="analyze_btn")
+# ─────────────────────────────────────────────────────────────────
+#  PROCESS REQUEST
+# ─────────────────────────────────────────────────────────────────
+if send:
+    if not u_input.strip():
+        st.warning("Please type a message before sending.")
+        st.stop()
 
-with col_preview:
-    if uploaded_preview:
-        st.markdown("<div style='font-family:Space Mono,monospace;font-size:0.7rem;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:0.5rem;'>Preview</div>", unsafe_allow_html=True)
-        st.image(uploaded_preview, width="stretch")
-    else:
-        st.markdown("""
-        <div style='background:#0d1624;border:1px dashed #1e2d45;border-radius:12px;
-                    height:200px;display:flex;align-items:center;justify-content:center;
-                    color:#1e2d45;font-family:Space Mono,monospace;font-size:0.8rem;'>
-            Image preview will appear here
-        </div>
-        """, unsafe_allow_html=True)
+    if not api_key:
+        st.error("❌ API Key required. Enter it in the sidebar.")
+        st.stop()
 
-st.markdown("---")
+    # Build API messages: system prompt + history (text only) + new user message
+    api_msgs = [{"role": "system", "content": sys_prompt}]
+    api_msgs += build_history_for_api(st.session_state.messages)
 
-# ──────────────────────────────────────────────
-# ANALYSIS
-# ──────────────────────────────────────────────
-if analyze_clicked and final_image_url:
-    with st.spinner(f"Analyzing with {selected_model} ..."):
+    # Process uploaded file
+    final_content = u_input.strip()
+    file_label = ""  # shown in chat history
+
+    if u_file:
+        ftype, fdata, fmime = process_file(u_file)
+
+        if ftype == "image":
+            file_label = f"\n\n📎 *Image attached: {u_file.name}*"
+
+            if use_deepseek:
+                # DeepSeek doesn't support vision → OCR via Qwen first
+                with st.spinner("🔍 Reading image via Qwen OCR..."):
+                    ocr_payload = [{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": ocr_prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:{fmime};base64,{fdata}"}}
+                        ]
+                    }]
+                    ocr_res = call_api(ocr_payload, "qwen/qwen3-vl-8b-instruct", False, timeout=120)
+
+                    if ocr_res is None:
+                        st.stop()
+                    if ocr_res.status_code != 200:
+                        try:
+                            err = ocr_res.json().get("error", {}).get("message", "Unknown")
+                        except Exception:
+                            err = ocr_res.text[:300]
+                        st.error(f"OCR step failed ({ocr_res.status_code}): {err}")
+                        st.stop()
+
+                    img_ctx = (
+                        ocr_res.json()
+                        .get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "OCR returned no text")
+                    )
+                    final_content = f"Image Context (OCR):\n{img_ctx}\n\nUser Question: {u_input.strip()}"
+
+            else:
+                # Vision-capable Qwen model: send image directly
+                final_content = [
+                    {"type": "text", "text": u_input.strip()},
+                    {"type": "image_url", "image_url": {"url": f"data:{fmime};base64,{fdata}"}}
+                ]
+
+        else:
+            # Text/PDF file
+            file_label = f"\n\n📎 *File attached: {u_file.name}*"
+            final_content = f"{fdata}\n\nUser Question: {u_input.strip()}"
+
+    # Save user message for display (always plain text)
+    display_text = u_input.strip() + file_label
+    st.session_state.messages.append({"role": "user", "content": display_text})
+
+    # Add the actual content (may include image dict) to API call only
+    api_msgs.append({"role": "user", "content": final_content})
+
+    # Call the main model
+    with st.spinner(f"Thinking with {model_name}..."):
+        res = call_api(api_msgs, model_id, stream_choice)
+
+    if res is None:
+        st.stop()
+
+    if res.status_code != 200:
         try:
-            raw = call_api(
-                api_key=st.session_state.api_key,
-                model=selected_model,
-                prompt=prompt_info["template"],
-                image_url=final_image_url,
-            )
-            output, err = clean_and_parse(raw)
-            st.session_state.last_raw = output
-            st.session_state.last_err = err
-        except Exception as e:
-            st.error(f"❌ API Error: {str(e)}")
-            st.session_state.last_raw = None
+            err_body = res.json()
+            err_msg = err_body.get("error", {}).get("message", json.dumps(err_body))
+        except Exception:
+            err_msg = res.text[:500]
+        st.error(f"❌ API Error {res.status_code}: {err_msg}")
+        st.stop()
 
-# ──────────────────────────────────────────────
-# OUTPUT — plain JSON only
-# ──────────────────────────────────────────────
-if st.session_state.last_raw:
-    st.markdown("<div class='section-title'>📊 Analysis Output</div>", unsafe_allow_html=True)
+    # Parse response
+    full_res = ""
+    ph = st.empty()
 
-    if hasattr(st.session_state, "last_err") and st.session_state.last_err:
-        st.warning(f"JSON parse warning: {st.session_state.last_err}")
+    if stream_choice and not use_deepseek:
+        full_res = stream_response(res, ph)
+    else:
+        try:
+            data = res.json()
+        except Exception:
+            st.error("❌ Could not parse API response as JSON.")
+            st.stop()
 
-    st.code(st.session_state.last_raw, language="json")
+        if "choices" in data and data["choices"]:
+            full_res = data["choices"][0]["message"]["content"]
+            ph.markdown(full_res)
+        elif "error" in data:
+            st.error(f"❌ API Error: {data['error'].get('message', str(data['error']))}")
+            st.stop()
+        else:
+            st.error(f"❌ Unexpected response format: {json.dumps(data)[:300]}")
+            st.stop()
 
-    st.download_button(
-        label="⬇️ Download JSON",
-        data=st.session_state.last_raw,
-        file_name=f"analysis_{prompt_info['key']}.json",
-        mime="application/json",
-    )
+    if full_res:
+        st.session_state.messages.append({"role": "assistant", "content": full_res})
+        st.rerun()
+    else:
+        st.warning("⚠️ Model returned an empty response. Try again or switch models.")
